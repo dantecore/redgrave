@@ -2,7 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/welkin/redgrave/internal/checker"
@@ -32,8 +34,8 @@ func HandlePing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.URL == "" {
-		http.Error(w, "url is required", http.StatusBadRequest)
+	if err := validateURL(req.URL); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -45,6 +47,10 @@ func HandlePing(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		timeout = d
+		if timeout <= 0 || timeout > 30*time.Second {
+			http.Error(w, "timeout must be between 0 and 30 seconds", http.StatusBadRequest)
+			return
+		}
 	}
 
 	result := checker.Ping(req.URL, timeout)
@@ -58,4 +64,25 @@ func HandlePing(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+
+}
+
+// validateURL checks that rawURL is a valid http/https URL with a non-empty host.
+func validateURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return err
+	}
+
+	switch parsed.Scheme {
+	case "http", "https":
+	default:
+		return errors.New("only http and https schemes are allowed")
+	}
+
+	if parsed.Host == "" {
+		return errors.New("url must include a host")
+	}
+
+	return nil
 }
