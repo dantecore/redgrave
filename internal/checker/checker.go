@@ -2,9 +2,12 @@ package checker
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 )
@@ -45,15 +48,54 @@ func Ping(url string, timeout time.Duration) Result {
 }
 
 func classify(err error) string {
+	// Timeout — catch before unwrapping so both *url.Error and bare
+	// context.DeadlineExceeded are classified uniformly.
 	if os.IsTimeout(err) {
-		return "timeout"
+		return "timeout: " + err.Error()
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return "timeout"
+	if errors.Is(err, context.Canceled) {
+		return "canceled"
 	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return "timeout"
+
+	urlErr, ok := errors.AsType[*url.Error](err)
+	if !ok {
+		return err.Error()
 	}
-	return err.Error()
+
+	inner := urlErr.Err
+
+	// Malformed URL.
+	if urlErr.Op == "parse" {
+		return "invalid_url: " + inner.Error()
+	}
+
+	// DNS failures (non-timeout — timeouts are caught above).
+	if dnsErr, ok := errors.AsType[*net.DNSError](inner); ok {
+		if dnsErr.IsNotFound {
+			return "dns: host not found"
+		}
+		return "dns: " + dnsErr.Error()
+	}
+
+	// TLS / certificate errors — check specific x509 errors before the
+	// generic *tls.CertificateVerificationError wrapper.
+	if _, ok := errors.AsType[x509.UnknownAuthorityError](inner); ok {
+		return "tls: unknown authority"
+	}
+	if _, ok := errors.AsType[x509.HostnameError](inner); ok {
+		return "tls: hostname mismatch"
+	}
+	if _, ok := errors.AsType[x509.CertificateInvalidError](inner); ok {
+		return "tls: invalid certificate"
+	}
+	if _, ok := errors.AsType[*tls.CertificateVerificationError](inner); ok {
+		return "tls: certificate verification failed"
+	}
+
+	// Connection-level errors (non-timeout).
+	if opErr, ok := errors.AsType[*net.OpError](inner); ok {
+		return "connection: " + opErr.Error()
+	}
+
+	return "network: " + inner.Error()
 }

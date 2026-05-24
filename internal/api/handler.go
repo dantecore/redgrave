@@ -47,12 +47,14 @@ func HandlePing(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		timeout = d
-		if timeout <= 0 || timeout > 30*time.Second {
-			http.Error(w, "timeout must be between 0 and 30 seconds", http.StatusBadRequest)
+		if timeout < time.Second || timeout > 30*time.Second {
+			http.Error(w, "timeout must be between 1 and 30 seconds", http.StatusBadRequest)
 			return
 		}
 	}
 
+	// TODO: If this becomes a hosted service, reject localhost/private/link-local targets
+	// or route private checks through a customer-owned agent.
 	result := checker.Ping(req.URL, timeout)
 
 	resp := PingResponse{
